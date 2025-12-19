@@ -192,3 +192,82 @@ async fn test_put_lifecycle_rule_invalid_json() {
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Invalid transitions JSON"));
 }
+
+#[tokio::test]
+async fn test_get_bucket_config_empty_region() {
+    let http_client = StaticReplayClient::new(vec![
+        // 1. GetBucketLocation
+        aws_smithy_runtime::client::http::test_util::ReplayEvent::new(
+            http::Request::builder()
+                .method("GET")
+                .uri("https://s3.us-east-1.amazonaws.com/test-bucket?location")
+                .body(SdkBody::empty())
+                .unwrap(),
+            http::Response::builder()
+                .status(200)
+                .body(SdkBody::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <LocationConstraint></LocationConstraint>"#))
+                .unwrap(),
+        ),
+        // 2. GetPublicAccessBlock
+        aws_smithy_runtime::client::http::test_util::ReplayEvent::new(
+            http::Request::builder()
+                .method("GET")
+                .uri("https://s3.us-east-1.amazonaws.com/test-bucket?publicAccessBlock")
+                .body(SdkBody::empty())
+                .unwrap(),
+            http::Response::builder()
+                .status(404) // Not found
+                .body(SdkBody::empty())
+                .unwrap(),
+        ),
+        // 3. GetBucketEncryption
+        aws_smithy_runtime::client::http::test_util::ReplayEvent::new(
+            http::Request::builder()
+                .method("GET")
+                .uri("https://s3.us-east-1.amazonaws.com/test-bucket?encryption")
+                .body(SdkBody::empty())
+                .unwrap(),
+            http::Response::builder()
+                .status(404) // Not found
+                .body(SdkBody::empty())
+                .unwrap(),
+        ),
+        // 4. GetBucketVersioning
+        aws_smithy_runtime::client::http::test_util::ReplayEvent::new(
+            http::Request::builder()
+                .method("GET")
+                .uri("https://s3.us-east-1.amazonaws.com/test-bucket?versioning")
+                .body(SdkBody::empty())
+                .unwrap(),
+            http::Response::builder()
+                .status(200)
+                .body(SdkBody::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <VersioningConfiguration status="Suspended"/>"#))
+                .unwrap(),
+        ),
+        // 5. GetBucketTagging
+        aws_smithy_runtime::client::http::test_util::ReplayEvent::new(
+            http::Request::builder()
+                .method("GET")
+                .uri("https://s3.us-east-1.amazonaws.com/test-bucket?tagging")
+                .body(SdkBody::empty())
+                .unwrap(),
+            http::Response::builder()
+                .status(404) // Not found
+                .body(SdkBody::empty())
+                .unwrap(),
+        ),
+    ]);
+
+    let config = aws_sdk_s3::Config::builder()
+        .behavior_version(BehaviorVersion::latest())
+        .region(Region::new("us-east-1"))
+        .http_client(http_client)
+        .build();
+    
+    let client = Client::from_conf(config);
+
+    let result = s3sh::buckets::get_bucket_config(&client, "test-bucket").await;
+    assert!(result.is_ok());
+}

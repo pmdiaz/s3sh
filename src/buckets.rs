@@ -84,15 +84,103 @@ pub fn validate_bucket_name(name: &str) -> Result<()> {
 }
 
 pub async fn get_bucket_config(client: &Client, bucket_name: &str) -> Result<()> {
+    // 1. Location
     let location = client.get_bucket_location()
         .bucket(bucket_name)
         .send()
         .await?;
     
-    let location_constraint = location.location_constraint().map(|l| l.as_str()).unwrap_or("us-east-1");
+    let location_constraint = location.location_constraint()
+        .map(|l| l.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("us-east-1");
     
+    // 2. Public Access Block
+    let public_access = client.get_public_access_block()
+        .bucket(bucket_name)
+        .send()
+        .await;
+    
+    let public_status = match public_access {
+        Ok(output) => {
+            let conf = output.public_access_block_configuration().unwrap();
+            if conf.block_public_acls().unwrap_or(false) && conf.ignore_public_acls().unwrap_or(false) && conf.block_public_policy().unwrap_or(false) && conf.restrict_public_buckets().unwrap_or(false) {
+                "Private (All Blocked)".green()
+            } else {
+                "Custom / Public".yellow()
+            }
+        },
+        Err(_) => "Not Configured".yellow(),
+    };
+
+    // 3. Encryption
+    let encryption = client.get_bucket_encryption()
+        .bucket(bucket_name)
+        .send()
+        .await;
+    
+    let encryption_status = match encryption {
+        Ok(output) => {
+            if let Some(rules) = output.server_side_encryption_configuration().map(|c| c.rules()) {
+                if let Some(first) = rules.first() {
+                    if let Some(def) = first.apply_server_side_encryption_by_default() {
+                        format!("{:?}", def.sse_algorithm()).cyan()
+                    } else {
+                        "Enabled (Unknown Algo)".cyan()
+                    }
+                } else {
+                    "Disabled".yellow()
+                }
+            } else {
+                "Disabled".yellow()
+            }
+        },
+        Err(_) => "Disabled".yellow(),
+    };
+
+    // 4. Versioning
+    let versioning = client.get_bucket_versioning()
+        .bucket(bucket_name)
+        .send()
+        .await;
+    
+    let versioning_status = match versioning {
+        Ok(output) => {
+            match output.status() {
+                Some(s) => format!("{:?}", s).cyan(),
+                None => "Suspended".yellow(),
+            }
+        },
+        Err(_) => "Unknown".red(),
+    };
+
+    // 5. Tags
+    let tagging = client.get_bucket_tagging()
+        .bucket(bucket_name)
+        .send()
+        .await;
+    
+    let tags_status = match tagging {
+        Ok(output) => {
+            let tags = output.tag_set();
+            if tags.is_empty() {
+                "None".to_string()
+            } else {
+                tags.iter()
+                    .map(|t| format!("{}={}", t.key(), t.value()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        },
+        Err(_) => "None".to_string(),
+    };
+
     println!("Bucket: {}", bucket_name.bold());
     println!("Region: {}", location_constraint.cyan());
+    println!("Public Access: {}", public_status);
+    println!("Encryption: {}", encryption_status);
+    println!("Versioning: {}", versioning_status);
+    println!("Tags: {}", tags_status);
     
     Ok(())
 }
