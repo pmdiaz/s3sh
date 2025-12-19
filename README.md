@@ -79,6 +79,16 @@ s3sh bucket lifecycle <bucket-name> \
   --id <rule-id> \
   --transitions '[{"days": 30, "storage_class": "STANDARD_IA"}]' \
   --expiration 365
+
+# Complex example with prefix and multiple transitions
+cargo run -- bucket lifecycle my-test-bucket \
+  --id "archive-logs-rule" \
+  --prefix "logs/" \
+  --transitions '[
+    {"days": 30, "storage_class": "STANDARD_IA"},
+    {"days": 90, "storage_class": "GLACIER"}
+  ]' \
+  --expiration 365
 ```
 
 Arguments:
