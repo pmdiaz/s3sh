@@ -411,3 +411,73 @@ pub async fn put_lifecycle_rule(
 }
 
 
+pub async fn delete_bucket(client: &Client, bucket_name: &str) -> Result<()> {
+    client.delete_bucket()
+        .bucket(bucket_name)
+        .send()
+        .await?;
+    
+    println!("{} Bucket '{}' deleted successfully.", "✔".green(), bucket_name);
+    Ok(())
+}
+
+pub async fn empty_bucket(client: &Client, bucket_name: &str) -> Result<()> {
+    println!("Emptying bucket '{}'...", bucket_name);
+    
+    loop {
+        let resp = client.list_object_versions()
+            .bucket(bucket_name)
+            .send()
+            .await?;
+        
+        let mut to_delete = Vec::new();
+
+        for v in resp.versions() {
+            if let (Some(key), Some(version_id)) = (v.key(), v.version_id()) {
+                to_delete.push(
+                    aws_sdk_s3::types::ObjectIdentifier::builder()
+                        .key(key)
+                        .version_id(version_id)
+                        .build()?
+                );
+            }
+        }
+
+        for m in resp.delete_markers() {
+            if let (Some(key), Some(version_id)) = (m.key(), m.version_id()) {
+                to_delete.push(
+                    aws_sdk_s3::types::ObjectIdentifier::builder()
+                        .key(key)
+                        .version_id(version_id)
+                        .build()?
+                );
+            }
+        }
+
+
+        if to_delete.is_empty() {
+            break;
+        }
+
+        let count = to_delete.len();
+        
+        client.delete_objects()
+            .bucket(bucket_name)
+            .delete(
+                aws_sdk_s3::types::Delete::builder()
+                    .set_objects(Some(to_delete))
+                    .build()?
+            )
+            .send()
+            .await?;
+            
+        println!("Deleted {} items...", count);
+
+        if !resp.is_truncated.unwrap_or(false) {
+            break;
+        }
+    }
+
+    println!("{} Bucket '{}' is now empty.", "✔".green(), bucket_name);
+    Ok(())
+}

@@ -271,3 +271,106 @@ async fn test_get_bucket_config_empty_region() {
     let result = s3sh::buckets::get_bucket_config(&client, "test-bucket").await;
     assert!(result.is_ok());
 }
+
+#[tokio::test]
+async fn test_delete_bucket() {
+    let http_client = StaticReplayClient::new(vec![
+        aws_smithy_runtime::client::http::test_util::ReplayEvent::new(
+            http::Request::builder()
+                .method("DELETE")
+                .uri("https://s3.us-east-1.amazonaws.com/test-bucket")
+                .body(SdkBody::empty())
+                .unwrap(),
+            http::Response::builder()
+                .status(204)
+                .body(SdkBody::empty())
+                .unwrap(),
+        )
+    ]);
+
+    let config = aws_sdk_s3::Config::builder()
+        .behavior_version(BehaviorVersion::latest())
+        .region(Region::new("us-east-1"))
+        .http_client(http_client)
+        .build();
+    
+    let client = Client::from_conf(config);
+
+    let result = s3sh::buckets::delete_bucket(&client, "test-bucket").await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_empty_bucket() {
+    let http_client = StaticReplayClient::new(vec![
+        // 1. ListObjectVersions
+        aws_smithy_runtime::client::http::test_util::ReplayEvent::new(
+            http::Request::builder()
+                .method("GET")
+                .uri("https://s3.us-east-1.amazonaws.com/test-bucket?versions")
+                .body(SdkBody::empty())
+                .unwrap(),
+            http::Response::builder()
+                .status(200)
+                .body(SdkBody::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <ListVersionsResult>
+                        <Version>
+                            <Key>file1.txt</Key>
+                            <VersionId>v1</VersionId>
+                        </Version>
+                        <DeleteMarker>
+                            <Key>file2.txt</Key>
+                            <VersionId>v2</VersionId>
+                        </DeleteMarker>
+                    </ListVersionsResult>"#))
+                .unwrap(),
+        ),
+        // 2. DeleteObjects
+        aws_smithy_runtime::client::http::test_util::ReplayEvent::new(
+            http::Request::builder()
+                .method("POST")
+                .uri("https://s3.us-east-1.amazonaws.com/test-bucket?delete")
+                .body(SdkBody::from(r#"<Delete xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Object><Key>file1.txt</Key><VersionId>v1</VersionId></Object><Object><Key>file2.txt</Key><VersionId>v2</VersionId></Object></Delete>"#))
+                .unwrap(),
+            http::Response::builder()
+                .status(200)
+                .body(SdkBody::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <DeleteResult>
+                        <Deleted>
+                            <Key>file1.txt</Key>
+                            <VersionId>v1</VersionId>
+                        </Deleted>
+                        <Deleted>
+                            <Key>file2.txt</Key>
+                            <VersionId>v2</VersionId>
+                        </Deleted>
+                    </DeleteResult>"#))
+                .unwrap(),
+        ),
+        // 3. ListObjectVersions (second call, empty)
+        aws_smithy_runtime::client::http::test_util::ReplayEvent::new(
+            http::Request::builder()
+                .method("GET")
+                .uri("https://s3.us-east-1.amazonaws.com/test-bucket?versions")
+                .body(SdkBody::empty())
+                .unwrap(),
+            http::Response::builder()
+                .status(200)
+                .body(SdkBody::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+                    <ListVersionsResult>
+                    </ListVersionsResult>"#))
+                .unwrap(),
+        ),
+    ]);
+
+    let config = aws_sdk_s3::Config::builder()
+        .behavior_version(BehaviorVersion::latest())
+        .region(Region::new("us-east-1"))
+        .http_client(http_client)
+        .build();
+    
+    let client = Client::from_conf(config);
+
+    let result = s3sh::buckets::empty_bucket(&client, "test-bucket").await;
+    assert!(result.is_ok());
+}

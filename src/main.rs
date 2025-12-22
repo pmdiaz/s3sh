@@ -108,6 +108,16 @@ enum BucketAction {
         #[arg(long, default_value = "true")]
         status: bool,
     },
+    /// Delete a bucket
+    Delete {
+        /// Name of the bucket
+        name: String,
+    },
+    /// Empty a bucket (delete all objects and versions)
+    Empty {
+        /// Name of the bucket
+        name: String,
+    },
 }
 
 fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn std::error::Error + Send + Sync + 'static>>
@@ -190,6 +200,12 @@ async fn main() -> Result<()> {
             }
             BucketAction::Lifecycle { name, id, prefix, transitions, expiration, status } => {
                 buckets::put_lifecycle_rule(&client, &name, &id, &prefix, &transitions, expiration, status).await?;
+            }
+            BucketAction::Delete { name } => {
+                buckets::delete_bucket(&client, &name).await?;
+            }
+            BucketAction::Empty { name } => {
+                buckets::empty_bucket(&client, &name).await?;
             }
         },
         Commands::Object { action } => match action {
